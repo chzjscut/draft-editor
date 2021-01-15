@@ -72,9 +72,10 @@ const TokenSpan = (props) => {
 }
 
 const MentionSpan = (props) => {
+  //console.log(props, props.children)
   const {name} = props.contentState.getEntity(props.entityKey).getData();
   return (
-    <span style={{color: "blue"}}>{props.children}</span>
+    <span style={{color: "blue", userSelect: "none"}}>{props.children}</span>
   )
 }
 
@@ -124,6 +125,7 @@ export default class MyEditor extends React.Component<any, any> {
   constructor(props) {
     super(props);
     this.state = {
+      searchKey: '',
       visible: false,
       contentStateJson: '',
       editorState: EditorState.createEmpty(decorator)
@@ -139,10 +141,55 @@ export default class MyEditor extends React.Component<any, any> {
     this.myBlockStyleFn = this.myBlockStyleFn.bind(this);
     this.getSelectedPerson = this.getSelectedPerson.bind(this);
     this.handleBeforeInput = this.handleBeforeInput.bind(this);
+    this.onCompositionStart = this.onCompositionStart.bind(this);
+    this.onCompositionEnd = this.onCompositionEnd.bind(this);
+    this.onInput = this.onInput.bind(this);
+  }
+
+  componentDidMount() {
+    let editor = document.getElementById("MyEditor");
+    //console.log(editor)
+    editor.addEventListener("compositionstart", this.onCompositionStart)
+    editor.addEventListener("input", this.onInput)
+    editor.addEventListener("compositionend", this.onCompositionEnd)
+  }
+  onCompositionStart(e) {
+    //console.log(1, e.target.composing)
+    e.target.composing = true
+  }
+  onInput(e) {
+    const {searchKey, visible} = this.state;
+    console.log(2, e.target.composing)
+    if (!e.target.composing && visible) {
+      //console.log(2, e.data)
+      if(e.data==="@") return;
+      this.setState({
+        searchKey: searchKey + e.data
+      })
+    }
+  }
+  onCompositionEnd(e) {
+    const {searchKey, visible} = this.state;
+    //console.log(3, e.target.composing)
+    if (!e.target.composing) return
+    e.target.composing = false
+    //console.log(3, e.data)
+    if(visible) {
+      if(e.data==="@") return;
+      this.setState({
+        searchKey: searchKey + e.data
+      })
+    }
   }
 
   onChange(editorState) {
+    /*if(this.state.visible){
+      const currentContent = editorState.getCurrentContent();
+      const selectionState = editorState.getSelection();
+      //console.log(selectionState.getStartOffset(), selectionState.getEndOffset())
+    }*/
     this.setState({editorState});
+    //this.setState({editorState: EditorState.setInlineStyleOverride(editorState, [] as any)});
   }
 
   convertToRaw(editorState) {
@@ -160,7 +207,9 @@ export default class MyEditor extends React.Component<any, any> {
    *   在handleKeyCommand中为不同的 command 绑定不同的方法（操作）。
    */
   keyBindingFn(e) {
-    console.log(e)
+    //console.log(this.refs.editor)
+    //e.persist()
+    //console.log(e.nativeEvent, e.nativeEvent.target)
     if(e.keyCode === 83 /* `S` key */ && hasCommandModifier(e)) {
       return 'save';
     }
@@ -169,9 +218,11 @@ export default class MyEditor extends React.Component<any, any> {
 
   handleBeforeInput(chars, editorState, eventTimeStamp) {
     //console.log(chars, eventTimeStamp)
+    const { visible, searchKey } = this.state;
     if(chars === "@") {
       this.setState({
-        visible: true
+        visible: true,
+        searchKey: ''
       })
     }
   }
@@ -338,18 +389,27 @@ export default class MyEditor extends React.Component<any, any> {
 
   //获取选中的人员
   async getSelectedPerson(person) {
-    const {editorState} = this.state;
-    //console.log(person)
+    //没有匹配的人
+    if(!person) {
+      this.setState({
+        visible: false,
+      })
+      return;
+    }
+    const {editorState, searchKey} = this.state;
+    //console.log(searchKey.length)
+    const offsetFromFocus = searchKey.length;
     this.setState({
-      visible: false
+      visible: false,
+      searchKey: ''
     })
     const contentState = editorState.getCurrentContent();
     const selectionState = editorState.getSelection();
     //console.log(selectionState.getAnchorOffset())
 
-    /*let updatedSelection = selectionState2.merge({
-      anchorOffset: selectionState.getAnchorOffset() - 1,
-    });*/
+    let updatedSelection = selectionState.merge({
+      anchorOffset: selectionState.getFocusOffset() - offsetFromFocus - 1,
+    });
 
     //获取到人员之后，创建Entity并通过decorator来渲染
     const contentStateWithEntity = contentState.createEntity("@Entity", "IMMUTABLE", person);
@@ -357,13 +417,24 @@ export default class MyEditor extends React.Component<any, any> {
 
     const contentStateWithReplaceText = Modifier.replaceText(
       contentState,
-      selectionState,
-      person.name,
+      updatedSelection,
+      "@"+person.name,
       [],
       entityKey
     )
+
+    /*let newEditorState = EditorState.setInlineStyleOverride(
+      EditorState.push(editorState, contentStateWithReplaceText, "insert-characters"),
+      []
+    )*/
     let newEditorState = EditorState.push(editorState, contentStateWithReplaceText, "insert-characters");
-    this.onChange(newEditorState);
+    this.setState({
+      editorState: newEditorState
+    }, () => {
+      //console.log(this.refs.editor)
+      this.refs.editor.focus()
+    })
+    //this.onChange(newEditorState);
 
     /*
     const contentStateWithMention = Modifier.applyEntity(
@@ -379,7 +450,7 @@ export default class MyEditor extends React.Component<any, any> {
   }
 
   render() {
-    const { editorState, contentStateJson, visible } = this.state;
+    const { searchKey, editorState, contentStateJson, visible } = this.state;
     return (
       <div>
         <div className="RichEditor-root">
@@ -391,22 +462,24 @@ export default class MyEditor extends React.Component<any, any> {
           <Button onClick={() => {this.toggleStyle("paragraph", "block", editorState)}}>自定义设置块级元素样式</Button>
           <Button onClick={() => {this.toggleStyle("section", "block", editorState)}}>块级元素扩展：section</Button>
           <Button onClick={() => {this.toggleStyle("MyCustomBlock", "block", editorState)}}>块级元素扩展：自定义块级包裹元素</Button>
-          <Editor
-            //readOnly={true}
-            editorState={this.state.editorState}
-            keyBindingFn={this.keyBindingFn}
-            handleKeyCommand={this.handleKeyCommand}
-            handleBeforeInput={this.handleBeforeInput}
-            blockRendererFn={this.myBlockRenderer}
-            blockStyleFn={this.myBlockStyleFn}
-            blockRenderMap={extendedBlockRenderMap}
-            onChange={this.onChange}
-          />
-
+          <div id="MyEditor">
+            <Editor
+              //readOnly={true}
+              ref="editor"
+              editorState={this.state.editorState}
+              keyBindingFn={this.keyBindingFn}
+              handleKeyCommand={this.handleKeyCommand}
+              handleBeforeInput={this.handleBeforeInput}
+              blockRendererFn={this.myBlockRenderer}
+              blockStyleFn={this.myBlockStyleFn}
+              blockRenderMap={extendedBlockRenderMap}
+              onChange={this.onChange}
+            />
+          </div>
           <Popover
             visible={visible}
             title={"成员"}
-            content={<PersonList onSelect={this.getSelectedPerson} />}
+            content={<PersonList searchKey={searchKey} onSelect={this.getSelectedPerson} />}
             placement="top"
           >
             
